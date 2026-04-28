@@ -5,8 +5,8 @@
 int main(int argc, char *argv[])
 {
 	openlog(NULL, 0, LOG_USER);
-	
-	if (argc != 2)
+	//printf("Number of arguments: %d\n", argc);	
+	if (argc != 3)
         {
                 syslog(LOG_ERR, "Incorrect number of arguments!");
                 return 1;
