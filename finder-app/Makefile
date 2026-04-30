@@ -4,7 +4,8 @@ ifdef CROSS_COMPILE
 	CC := gcc
 endif
 
-all: $(TARGET)
+all: writer
+	$(CC) -o writer writer.c
 
 default: writer.c
 	$(CC) -o writer writer.c
