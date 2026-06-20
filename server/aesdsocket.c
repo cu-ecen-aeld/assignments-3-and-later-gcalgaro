@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/queue.h>
+#include <pthread.h>
 
 // Define addrinfo struct
 
