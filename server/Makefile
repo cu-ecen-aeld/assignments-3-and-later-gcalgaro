@@ -15,3 +15,4 @@ default: aesdsocket.c
 
 clean:
 	rm -f aesdsocket
+	
