@@ -4,7 +4,7 @@ ifdef CROSS_COMPILE
 	CC := gcc
 endif
 
-CFLAGS = -Wall -Wextra -pthread -g -02
+CFLAGS = -Wall -Wextra -pthread -g
 LDFLAGS = -pthread
 
 all: aesdsocket
@@ -15,4 +15,4 @@ default: aesdsocket.c
 
 clean:
 	rm -f aesdsocket
-	
+
