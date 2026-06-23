@@ -4,6 +4,9 @@ ifdef CROSS_COMPILE
 	CC := gcc
 endif
 
+CFLAGS = -Wall -Wextra -pthread -g -02
+LDFLAGS = -pthread
+
 all: aesdsocket
 	$(CC) -o aesdsocket aesdsocket.c -Wall -Werror
 
