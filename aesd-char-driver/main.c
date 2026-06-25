@@ -52,7 +52,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     size_t entryOffset = 0;
     size_t bytesToRead = 0;
     
-    if (mutex_lock_interruptile(&dev->lock))
+    if (mutex_lock_interruptible(&dev->lock))
     {
         return -ERESTARTSYS;
     }
@@ -83,7 +83,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
 
-    struct aesd_dev *dev = flip->private_data;
+    struct aesd_dev *dev = filp->private_data;
     char *newLine;
     char *combinedBuffer;
     char *combined;
@@ -131,9 +131,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     dev->partial_entry = combined;
     dev->partial_entry_size = combinedSize;
 
-    newline = memchr(dev->partial_entry, '\n', dev->partial_entry_size);
+    newLine = memchr(dev->partial_entry, '\n', dev->partial_entry_size);
 
-    if (newline)
+    if (newLine)
     {
         size_t entry_len = (newline - dev->partial_entry_size) + 1;
         struct aesd_buffer_entry newEntry;
@@ -148,7 +148,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         newEntry.buffptr = dev->partial_entry;
         newEntry.size = entry_len;
 
-        aesd_circular_buffer_add_entry(&dev->circular_buffer, &new_entry);
+        aesd_circular_buffer_add_entry(&dev->circular_buffer, &newEntry);
 
         if (entry_len < dev->partial_entry_size)
         {
