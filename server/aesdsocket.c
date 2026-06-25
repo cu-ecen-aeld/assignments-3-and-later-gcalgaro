@@ -29,7 +29,14 @@
          (var) = (tvar))
 #endif
 
-#define DATA_FILE "/var/tmp/aesdsocketdata"
+//#define DATA_FILE "/var/tmp/aesdsocketdata"
+
+#if USE_AESD_CHAR_DEVICE
+    #define DATA_FILE "/dev/aesdchar"
+#else
+    #define DATA_FILE "/var/tmp/aesdsocketdata"
+#endif
+
 #define BUFFER_SIZE 1024
 
 // extern bool signaled;	// Used for signal interrupts
@@ -168,7 +175,7 @@ void * connect_thread(void * threadParam)
     theData->complete = 1;
     return NULL;
 }
-
+#if !USE_AESD_CHAR_DEVICE
 void * append_timestamp(void * arg)
 {
     (void)arg;
@@ -218,6 +225,7 @@ void * append_timestamp(void * arg)
 
     return NULL;
 }
+#endif
 
 int main(int argc, char* argv[])
 {
@@ -315,8 +323,10 @@ int main(int argc, char* argv[])
         daemonize();
 	}
 
+    #if !USE_AESD_CHAR_DEVICE
     pthread_t timeID;   // Initialize timestamp thread
     pthread_create(&timeID, NULL, append_timestamp, NULL);
+    #endif
 
 	// Endless loop for accepting new clients
 	while (!signaled)
@@ -398,7 +408,9 @@ int main(int argc, char* argv[])
 
     syslog(LOG_INFO, "Signal received, exiting...");
 
+    #if !USE_AESD_CHAR_DEVICE
     pthread_join(timeID, NULL);
+    #endif
 
     threadData_t *theThread;
 
@@ -410,10 +422,12 @@ int main(int argc, char* argv[])
         free(theThread);
     }
 
+    #if !USE_AESD_CHAR_DEVICE
     if (access(DATA_FILE, F_OK) == 0)
     {
         unlink(DATA_FILE);
     }
+    #endif
 
     if (server_socket >= 0)
     {

@@ -4,7 +4,9 @@ ifdef CROSS_COMPILE
 	CC := gcc
 endif
 
+USE_AESD_CHAR_DEVICE ?= 1
 CFLAGS = -Wall -Wextra -pthread -g
+CFLAGS += -DUSE_AESD_CHAR_DEVICE=$(USE_AESD_CHAR_DEVICE)
 LDFLAGS = -pthread
 
 all: aesdsocket
