@@ -102,7 +102,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         return -EFAULT;
     }
 
-    if (mutex_lock_interruptile(&dev->lock))
+    if (mutex_lock_interruptible(&dev->lock))
     {
         kfree(combinedBuffer);
         return -ERESTARTSYS;
@@ -135,7 +135,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     if (newLine)
     {
-        size_t entry_len = (newline - dev->partial_entry_size) + 1;
+        size_t entry_len = (newLine - dev->partial_entry_size) + 1;
         struct aesd_buffer_entry newEntry;
         const struct aesd_buffer_entry *freedEntry;
 
@@ -153,7 +153,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         if (entry_len < dev->partial_entry_size)
         {
             size_t remainderSize = dev->partial_entry_size - entry_len;
-            char *remainder = kmalloc(remainderSize, GFPKERNEL);
+            char *remainder = kmalloc(remainderSize, GFP_KERNEL);
 
             if (remainder)
             {
