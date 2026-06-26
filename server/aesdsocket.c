@@ -23,6 +23,10 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 
+#if USE_AESD_CHAR_DEVICE
+    #include "../aesd-char-driver/aesd_ioctl.h"
+#endif
+
 #ifndef SLIST_FOREACH_SAFE
 #define SLIST_FOREACH_SAFE(var, head, field, tvar)           \
     for ((var) = SLIST_FIRST((head));                        \
@@ -150,7 +154,7 @@ void * connect_thread(void * threadParam)
     {
         if (strncmp(recv_buf, "AESD_IOCSEEKTO:", 19) == 0)
         {
-            #if USE_AESD_CHAR_DEVICE
+#if USE_AESD_CHAR_DEVICE
          
             uint32_t writeCmd, writeCmdOffset;
 
@@ -184,17 +188,17 @@ void * connect_thread(void * threadParam)
 
                 pthread_mutex_unlock(&file_mutex);
             }
-            #else
+#else
 
             syslog(LOG_WARNING, "AESDCHAR_IOCSEEKTO received, but USE_AESD_CHAR_DEVICE is false");
             
-            #endif
+#endif
         }
         else
         {
             pthread_mutex_lock(&file_mutex);
 
-            #if USE_AESD_CHAR_DEVICE
+#if USE_AESD_CHAR_DEVICE
           
             int fd = open(DATA_FILE, O_RDWR);
 
@@ -223,15 +227,23 @@ void * connect_thread(void * threadParam)
 
                 close(fd);
             }
-            #else
+#else
             FILE *f = fopen(DATA_FILE, "a+");
 
-            if (f != NULL)
+            if (f)
             {
                 fwrite(recv_buf, 1, totalBytesRecv, f);
-                fflush(f);
-            
-                fseek(f, 0, SEEK_SET);
+                fclose(f);
+            }
+            else
+            {
+                syslog(LOG_ERR, "fopen failed %m");
+            }
+
+            f = fopen(DATA_FILE, "r");
+
+            if (f)
+            {
                 char send_buf[BUFFER_SIZE];
                 size_t bytesToSend;
             
@@ -239,14 +251,17 @@ void * connect_thread(void * threadParam)
                 {
                     send(theData->client_fd, send_buf, bytesToSend, 0);
                 }
+
+                fclose(f);
             }
 
-            fclose(f);
-
-            #endif
+#endif
+            pthread_mutex_unlock(&file_mutex);
         }
 
-        pthread_mutex_unlock(&file_mutex);
+        free(recv_buf);
+        recv_buf = NULL;
+        totalBytesRecv = 0;
     }
 
     free(recv_buf);
