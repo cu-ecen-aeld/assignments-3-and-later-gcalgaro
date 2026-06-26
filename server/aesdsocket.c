@@ -33,6 +33,10 @@
 
 //#define DATA_FILE "/var/tmp/aesdsocketdata"
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
 #if USE_AESD_CHAR_DEVICE
     #define DATA_FILE "/dev/aesdchar"
     #include "../aesd-char-driver/aesd_ioctl.h"

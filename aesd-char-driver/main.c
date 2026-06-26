@@ -145,7 +145,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     if (newLine)
     {
-        size_t entry_len = (newLine - dev->partial_entry_size) + 1;
+        size_t entry_len = (newLine - dev->partial_entry) + 1;
         struct aesd_buffer_entry newEntry;
         const struct aesd_buffer_entry *freedEntry;
 
