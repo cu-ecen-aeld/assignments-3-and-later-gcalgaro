@@ -65,6 +65,7 @@ SLIST_HEAD(slisthead, threadData) head = SLIST_HEAD_INITIALIZER(head);
 
 static void handle_signal(int signo)
 {
+    (void)signo;
     syslog(LOG_INFO, "Signal catch, exiting");
     signaled = 1;
 
@@ -177,7 +178,7 @@ void * connect_thread(void * threadParam)
                 else
                 {
                     char send_buf[BUFFER_SIZE];
-                    size_t bytesToSend;
+                    ssize_t bytesToSend;
 
                     while ((bytesToSend = read(fd, send_buf, sizeof(send_buf))) > 0)
                     {
@@ -217,7 +218,7 @@ void * connect_thread(void * threadParam)
                 }
 
                 char send_buf[BUFFER_SIZE];
-                size_t bytesToSend;
+                ssize_t bytesToSend;
 
                 lseek(fd, 0, SEEK_SET);
 
@@ -518,7 +519,7 @@ int main(int argc, char* argv[])
         free(theThread);
     }
 
-    #if !USE_AESD_CHAR_DEVICE
+    #if USE_AESD_CHAR_DEVICE
     if (access(DATA_FILE, F_OK) == 0)
     {
         unlink(DATA_FILE);
