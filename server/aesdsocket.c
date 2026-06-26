@@ -157,8 +157,8 @@ void * connect_thread(void * threadParam)
             if (sscanf(recv_buf, "AESDCHAR_IOCSEEKTO:%u,%u", &writeCmd, &writeCmdOffset) == 2)
             {
                 struct aesd_seekto seekTo;
-                seekTo.writeCmd = writeCmd;
-                seekTo.writeCmdOffset = writeCmdOffset;
+                seekTo.write_cmd = writeCmd;
+                seekTo.write_cmd_offset = writeCmdOffset;
 
                 pthread_mutex_lock(&file_mutex);
 
