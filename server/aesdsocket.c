@@ -22,10 +22,7 @@
 #include <sys/select.h>
 #include <errno.h>
 #include <sys/ioctl.h>
-
-#if USE_AESD_CHAR_DEVICE
-    #include "../aesd-char-driver/aesd_ioctl.h"
-#endif
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #ifndef SLIST_FOREACH_SAFE
 #define SLIST_FOREACH_SAFE(var, head, field, tvar)           \
