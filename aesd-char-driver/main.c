@@ -73,7 +73,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         bytesToRead = count;
     }
 
-    if (copy_to_user(buf, entry->buffptr + entryOffser, bytesToRead))
+    if (copy_to_user(buf, entry->buffptr + entryOffset, bytesToRead))
     {
         retval = -EFAULT;
         goto out;
@@ -237,7 +237,7 @@ out:
     return retval;
 }
 
-static long aesd_adjust_file_offset(struct file *filp uint32_t writeCmd, uint32_t writeCmdOffset)
+static long aesd_adjust_file_offset(struct file *filp, uint32_t writeCmd, uint32_t writeCmdOffset)
 {
     struct aesd_dev *dev = filp->private_data;
     struct aesd_buffer_entry *entry;
