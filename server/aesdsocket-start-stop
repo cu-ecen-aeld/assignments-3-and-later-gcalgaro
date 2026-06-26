@@ -7,7 +7,9 @@ case "$1" in
         ;;
     stop)
         echo "Stopping aesdsocket..."
-        start-stop-daemon -K -n aesdsocket
+        while start-stop-daemon -K -t -n aesdsocket > /dev/null 2>&1; do
+            sleep 1
+        done
         ;;
     *)
         echo "Default: $0 {start|stop}"

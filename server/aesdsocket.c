@@ -21,6 +21,7 @@
 #include <time.h>
 #include <sys/select.h>
 #include <errno.h>
+#include <sys/ioctl.h>
 
 #ifndef SLIST_FOREACH_SAFE
 #define SLIST_FOREACH_SAFE(var, head, field, tvar)           \
@@ -33,6 +34,7 @@
 
 #if USE_AESD_CHAR_DEVICE
     #define DATA_FILE "/dev/aesdchar"
+    #include "../aesd-char-driver/aesd_ioctl.h"
 #else
     #define DATA_FILE "/var/tmp/aesdsocketdata"
 #endif
@@ -146,24 +148,102 @@ void * connect_thread(void * threadParam)
 
     if (newline && !signaled)
     {
-        pthread_mutex_lock(&file_mutex);
-        FILE *f = fopen(DATA_FILE, "a+");
-
-        if (f != NULL)
+        if (strncmp(recv_buf, "AESD_IOCSEEKTO:", 19) == 0)
         {
-            fwrite(recv_buf, 1, totalBytesRecv, f);
-            fflush(f);
-            fseek(f, 0, SEEK_SET);
-            char send_buf[BUFFER_SIZE];
-            size_t bytesToSend;
-            
-            while ((bytesToSend = fread(send_buf, 1, sizeof(send_buf), f)) > 0)
+            #if USE_AESD_CHAR_DEVICE
+         
+            uint32_t writeCmd, writeCmdOffset;
+
+            if (sscanf(recv_buf, "AESDCHAR_IOCSEEKTO:%u,%u", &writeCmd, &writeCmdOffset) == 2)
             {
-                send(theData->client_fd, send_buf, bytesToSend, 0);
+                struct aesd_seekto seekTo;
+                seekTo.writeCmd = writeCmd;
+                seekTo.writeCmdOffset = writeCmdOffset;
+
+                pthread_mutex_lock(&file_mutex);
+
+                int fd = open(DATA_FILE, O_RDWR);
+
+                if (ioctl(fd, AESDCHAR_IOCSEEKTO, &seekTo) == -1)
+                {
+                    syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO failure: %m");
+                    close(fd);
+                }
+                else
+                {
+                    char send_buf[BUFFER_SIZE];
+                    size_t bytesToSend;
+
+                    while ((bytesToSend = read(fd, send_buf, sizeof(send_buf))) > 0)
+                    {
+                        send(theData->client_fd, send_buf, bytesToSend, 0);
+                    }
+
+                    close(fd);
+                }
+
+                pthread_mutex_unlock(&file_mutex);
+            }
+            #else
+
+            syslog(LOG_WARNING, "AESDCHAR_IOCSEEKTO received, but USE_AESD_CHAR_DEVICE is false");
+            
+            #endif
+        }
+        else
+        {
+            pthread_mutex_lock(&file_mutex);
+
+            #if USE_AESD_CHAR_DEVICE
+          
+            int fd = open(DATA_FILE, O_RDWR);
+
+            if (fd == -1)
+            {
+                syslog(LOG_ERR, "open failed: %m");
+            }
+            else
+            {
+                ssize_t written = write(fd, recv_buf, totalBytesRecv);
+
+                if (written < 0)
+                {
+                    syslog(LOG_ERR, "write failed: %m");
+                }
+
+                char send_buf[BUFFER_SIZE];
+                size_t bytesToSend;
+
+                lseek(fd, 0, SEEK_SET);
+
+                while ((bytesToSend = read(fd, send_buf, sizeof(send_buf))) > 0)
+                {
+                    send(theData->client_fd, send_buf, bytesToSend, 0);
+                }
+
+                close(fd);
+            }
+            #else
+            FILE *f = fopen(DATA_FILE, "a+");
+
+            if (f != NULL)
+            {
+                fwrite(recv_buf, 1, totalBytesRecv, f);
+                fflush(f);
+            
+                fseek(f, 0, SEEK_SET);
+                char send_buf[BUFFER_SIZE];
+                size_t bytesToSend;
+            
+                while ((bytesToSend = fread(send_buf, 1, sizeof(send_buf), f)) > 0)
+                {
+                    send(theData->client_fd, send_buf, bytesToSend, 0);
+                }
             }
 
             fclose(f);
 
+            #endif
         }
 
         pthread_mutex_unlock(&file_mutex);
