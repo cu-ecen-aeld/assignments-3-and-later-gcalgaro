@@ -256,6 +256,20 @@ static long aesd_adjust_file_offset(struct file *filp, uint32_t writeCmd, uint32
     {
         if (entry->buffptr != NULL)
         {
+            maxEntries++;
+        }
+
+        if (writeCmd >= maxEntries)
+        {
+            retval = -EINVAL;
+            goto out;
+        }
+
+        index = 0;
+
+        AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->circular_buffer, index)
+        if (entry->buffptr != NULL)
+        {
             if (cmdIndex == writeCmd)
             {
                 if (writeCmdOffset > entry->size)
@@ -287,9 +301,10 @@ static long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     switch (cmd)
     {
         case AESDCHAR_IOCSEEKTO:
+        {
             struct aesd_seekto seekTo;
 
-            if (copy_from_user(&seekTo, (const void __user *) arg, sizeof(seekTo)) != 0)
+            if (copy_from_user(&seekTo, (const void __user *)arg, sizeof(seekTo)) != 0)
             {
                 retval = -EFAULT;
             }
@@ -298,6 +313,7 @@ static long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 retval = aesd_adjust_file_offset(filp, seekTo.write_cmd, seekTo.write_cmd_offset);
             }
             break;
+        }
         default:
             return -EINVAL;
     }
@@ -328,8 +344,6 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
     }
     return err;
 }
-
-
 
 int aesd_init_module(void)
 {
