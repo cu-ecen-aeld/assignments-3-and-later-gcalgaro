@@ -237,7 +237,7 @@ out:
     return retval;
 }
 
-static long aesd_adjust_file_offset(struct file *filp. uint32_t writeCmd, uint32_t writeCmdOffset)
+static long aesd_adjust_file_offset(struct file *filp uint32_t writeCmd, uint32_t writeCmdOffset)
 {
     struct aesd_dev *dev = filp->private_data;
     struct aesd_buffer_entry *entry;
@@ -295,7 +295,7 @@ static long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             }
             else
             {
-                retval = aesd_adjust_file_offset(filp, seekTo.writeCmd, seekTo.writeCmdOffset);
+                retval = aesd_adjust_file_offset(filp, seekTo.write_cmd, seekTo.write_cmd_offset);
             }
             break;
         default:
