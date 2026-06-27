@@ -33,13 +33,8 @@
 
 //#define DATA_FILE "/var/tmp/aesdsocketdata"
 
-#ifndef USE_AESD_CHAR_DEVICE
-#define USE_AESD_CHAR_DEVICE 1
-#endif
-
 #if USE_AESD_CHAR_DEVICE
     #define DATA_FILE "/dev/aesdchar"
-    #include "../aesd-char-driver/aesd_ioctl.h"
 #else
     #define DATA_FILE "/var/tmp/aesdsocketdata"
 #endif
@@ -51,6 +46,7 @@
 static int server_fd = -1;
 static volatile sig_atomic_t signaled = 0;
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t thread_list_lock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct threadData 
 {
@@ -60,6 +56,11 @@ typedef struct threadData
     volatile int complete;
     SLIST_ENTRY(threadData) entries;
 } threadData_t;
+
+typedef struct {
+    int client_fd;
+    threadData_t *node;
+} workerArgs_t;
 
 SLIST_HEAD(slisthead, threadData) head = SLIST_HEAD_INITIALIZER(head);
 
@@ -104,20 +105,73 @@ static void daemonize(void)
     }
 }
 
-void * connect_thread(void * threadParam)
+static threadData_t *thread_list_add(pthread_t tid, int client_fd, const char *client_ip)
 {
-    threadData_t *theData = (threadData_t *)threadParam;
-    char *recv_buf = NULL;
-    size_t totalBytesRecv = 0;
-    char chunk[BUFFER_SIZE];
-    ssize_t bytesRead = 0;
-    int newline = 0;
+    threadData_t *node = calloc(1, sizeof(*node));
 
-    while (!newline && !signaled)
+    if (!node)
     {
-        bytesRead = recv(theData->client_fd, chunk, sizeof(chunk), 0);
+        return NULL;
+    }
 
-        if (bytesRead < 0)
+    node->threadID = tid;
+    node->client_fd = client_fd;
+    node->complete = 0;
+    strncpy(node->clientIP, client_ip, sizeof(node->clientIP) - 1);
+
+    pthread_mutex_lock(&thread_list_lock);
+    SLIST_INSERT_HEAD(&head, node, entries);
+    pthread_mutex_unlock(&thread_list_lock);
+
+    return node;
+}
+
+static void thread_list_remove(threadData_t *node)
+{
+    pthread_mutex_lock(&thread_list_lock);
+    SLIST_REMOVE(&head, node, threadData, entries);
+    pthread_mutex_unlock(&thread_list_lock);
+
+    free(node);
+}
+
+static void shutdown_all_threads(void)
+{
+    pthread_mutex_lock(&thread_list_lock);
+    threadData_t *n;
+    SLIST_FOREACH(n, &head, entries)
+    {
+        n->complete = 1;
+        shutdown(n->client_fd, SHUT_RDWR);
+    }
+
+    pthread_mutex_unlock(&thread_list_lock);
+
+    while (!SLIST_EMPTY(&head))
+    {
+        threadData_t *node = SLIST_FIRST(&head);
+        pthread_join(node->threadID, NULL);
+        thread_list_remove(node);
+    }
+}
+
+
+static void * connect_thread(void * threadParam)
+{
+    workerArgs_t params = *(workerArgs_t *)threadParam;
+    free(threadParam);
+
+    int client_fd = params.client_fd;
+    threadData_t *theData = params.node;
+    char recv_buf[BUFFER_SIZE];
+    char *packet = NULL;
+    size_t packet_size = 0;
+
+    while (!theData->complete)
+    {
+        ssize_t bytesRead = recv(client_fd, recv_buf, sizeof(recv_buf), 0);
+
+        if (bytesRead <= 0)
         {
             if (errno == EINTR)
             {
@@ -132,63 +186,63 @@ void * connect_thread(void * threadParam)
             break;
         }
 
-        char *newbuf = realloc(recv_buf, totalBytesRecv + bytesRead);
+        size_t offset = 0;
+        char *newLine;
 
-        if (newbuf == NULL)
+        while ((newLine = memchr(recv_buf + offset, '\n', (size_t)bytesRead - offset)) != NULL)
         {
-            free(recv_buf);
-            close(theData->client_fd);
-            theData->complete = 1;
-            return NULL;
-        }
+            size_t chunk_len = (size_t)(newLine - (recv_buf + offset)) + 1;
 
-        recv_buf = newbuf;
-        memcpy(recv_buf + totalBytesRecv, chunk, bytesRead);
-        totalBytesRecv += bytesRead;
+            char *newbuf = realloc(packet, packet_size + bytesRead);
 
-        if (totalBytesRecv > 0 && recv_buf[totalBytesRecv - 1] == '\n')
-        {
-            newline = 1;
-        }
-    }
+            if (!newbuf)
+            {
+                syslog(LOG_ERR, "realloc failed");
+                free(packet);
+                packet = NULL;
+                packet_size = 0;
+                break;
+            }
 
-    if (newline && !signaled)
-    {
-        if (strncmp(recv_buf, "AESD_IOCSEEKTO:", 19) == 0)
-        {
+            packet = newbuf;
+            memcpy(packet + packet_size, recv_buf + offset, chunk_len);
+            packet_size += chunk_len;
+
+            if (strncmp(recv_buf, "AESD_IOCSEEKTO:", 19) == 0)
+            {
 #if USE_AESD_CHAR_DEVICE
          
-            uint32_t writeCmd, writeCmdOffset;
+                uint32_t writeCmd, writeCmdOffset;
 
-            if (sscanf(recv_buf, "AESDCHAR_IOCSEEKTO:%u,%u", &writeCmd, &writeCmdOffset) == 2)
-            {
-                struct aesd_seekto seekTo;
-                seekTo.write_cmd = writeCmd;
-                seekTo.write_cmd_offset = writeCmdOffset;
-
-                pthread_mutex_lock(&file_mutex);
-
-                int fd = open(DATA_FILE, O_RDWR);
-
-                if (ioctl(fd, AESDCHAR_IOCSEEKTO, &seekTo) == -1)
+                if (sscanf(packet, "AESDCHAR_IOCSEEKTO:%u,%u", &writeCmd, &writeCmdOffset) == 2)
                 {
-                    syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO failure: %m");
-                    close(fd);
-                }
-                else
-                {
-                    char send_buf[BUFFER_SIZE];
-                    ssize_t bytesToSend;
+                    struct aesd_seekto seekTo;
+                    seekTo.write_cmd = writeCmd;
+                    seekTo.write_cmd_offset = writeCmdOffset;
 
-                    while ((bytesToSend = read(fd, send_buf, sizeof(send_buf))) > 0)
+                    pthread_mutex_lock(&file_mutex);
+
+                    int fd = open(DATA_FILE, O_RDWR);
+
+                    if (ioctl(fd, AESDCHAR_IOCSEEKTO, &seekTo) == -1)
                     {
-                        send(theData->client_fd, send_buf, bytesToSend, 0);
+                        syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO failure: %m");
+                        close(fd);
+                    }
+                    else
+                    {
+                        char send_buf[BUFFER_SIZE];
+                        ssize_t bytesToSend;
+
+                        while ((bytesToSend = read(fd, send_buf, sizeof(send_buf))) > 0)
+                        {
+                            send(client_fd, send_buf, bytesToSend, 0);
+                        }
+
+                        close(fd);
                     }
 
-                    close(fd);
-                }
-
-                pthread_mutex_unlock(&file_mutex);
+                    pthread_mutex_unlock(&file_mutex);
             }
 #else
 
@@ -210,7 +264,7 @@ void * connect_thread(void * threadParam)
             }
             else
             {
-                ssize_t written = write(fd, recv_buf, totalBytesRecv);
+                ssize_t written = write(fd, packet, packet_size);
 
                 if (written < 0)
                 {
@@ -224,54 +278,79 @@ void * connect_thread(void * threadParam)
 
                 while ((bytesToSend = read(fd, send_buf, sizeof(send_buf))) > 0)
                 {
-                    send(theData->client_fd, send_buf, bytesToSend, 0);
+                    send(client_fd, send_buf, bytesToSend, 0);
                 }
 
                 close(fd);
             }
 #else
-            FILE *f = fopen(DATA_FILE, "a+");
+            FILE *fp = fopen(DATA_FILE, "a");
 
-            if (f)
+            if (fp)
             {
-                fwrite(recv_buf, 1, totalBytesRecv, f);
-                fclose(f);
+                fwrite(packet, 1, packet_size, fp);
+                fclose(fp);
             }
             else
             {
                 syslog(LOG_ERR, "fopen failed %m");
             }
 
-            f = fopen(DATA_FILE, "r");
+            fp = fopen(DATA_FILE, "r");
 
-            if (f)
+            if (fp)
             {
                 char send_buf[BUFFER_SIZE];
                 size_t bytesToSend;
             
-                while ((bytesToSend = fread(send_buf, 1, sizeof(send_buf), f)) > 0)
+                while ((bytesToSend = fread(send_buf, 1, sizeof(send_buf), fp)) > 0)
                 {
-                    send(theData->client_fd, send_buf, bytesToSend, 0);
+                    send(client_fd, send_buf, bytesToSend, 0);
                 }
 
-                fclose(f);
+                fclose(fp);
             }
 
 #endif
             pthread_mutex_unlock(&file_mutex);
         }
 
-        free(recv_buf);
-        recv_buf = NULL;
-        totalBytesRecv = 0;
+        free(packet);
+        packet = NULL;
+        packet_size = 0;
+        offset += chunk_len;
     }
 
-    free(recv_buf);
-    close(theData->client_fd);
+    if (offset < (size_t)bytesRead)
+        {
+            size_t remaining = (size_t)bytesRead - offset;
+            char *tmp = realloc(packet, packet_size + remaining);
+            if (!tmp)
+            {
+                syslog(LOG_ERR, "realloc failed");
+                free(packet);
+                packet = NULL;
+                packet_size = 0;
+                break;
+            }
+            packet = tmp;
+            memcpy(packet + packet_size, recv_buf + offset, remaining);
+            packet_size += remaining;
+        }
+    }
+
+    free(packet);
+    close(client_fd);
     syslog(LOG_INFO, "Closed connection from %s", theData->clientIP);
-    theData->complete = 1;
+
+    if (!signaled)
+    {
+        thread_list_remove(theData);
+    }
+
     return NULL;
 }
+
 #if !USE_AESD_CHAR_DEVICE
 void * append_timestamp(void * arg)
 {
@@ -344,7 +423,7 @@ int main(int argc, char* argv[])
         }
     }
 
-	memset(&new_action, 0, sizeof(struct sigaction));
+	memset(&new_action, 0, sizeof(new_action));
 	new_action.sa_handler = handle_signal;
 	
 	if (sigaction(SIGTERM, &new_action, NULL) != 0)
@@ -428,108 +507,176 @@ int main(int argc, char* argv[])
 	// Endless loop for accepting new clients
 	while (!signaled)
 	{
-        fd_set rfds;
-        struct timeval theTime;
-        FD_ZERO(&rfds);
-        FD_SET(server_socket, &rfds);
-
-        theTime.tv_sec = 1;
-        theTime.tv_usec = 0;
-
-        int result = select(server_socket + 1, &rfds, NULL, NULL, &theTime);
-        if (result == -1)
-        {
-            if (errno = EINTR)
-            {
-                continue;
-            }
-            break;
-        }
-        else if (result == 0)
-        {
-            continue;
-        }
-
         int client_fd = accept(server_socket, (struct sockaddr *)&client_addr, &addr_size);
 
-        if (client_fd < 0)
+        if (client_fd == -1)
         {
+            if (signaled)
+            {
+                break;
+            }
             if (errno == EINTR)
             {
                 continue;
             }
-            break;
+
+            syslog(LOG_ERR, "accept failed %m");
+            continue;
         }
 
-        threadData_t *theNode = malloc(sizeof(threadData_t));
+        char client_ip[16];
+        inet_ntop(AF_INET, &(((struct sockaddr_in *)&client_addr)->sin_addr), client_ip, 16);
+        syslog(LOG_INFO, "Client connected successfully");
 
-        if (theNode == NULL)
+        workerArgs_t *args = malloc(sizeof(*args));
+        if (!args)
         {
+            syslog(LOG_ERR, "malloc failed dropping connection");
             close(client_fd);
             continue;
         }
 
-        theNode->client_fd = client_fd;
-        theNode->complete = 0;
-        // Retrieve IP address from client
+        threadData_t *theNode = thread_list_add(0, client_fd, client_ip);
 
-        inet_ntop(AF_INET, &(((struct sockaddr_in *)&client_addr)->sin_addr), theNode->clientIP, 16);
-        syslog(LOG_INFO, "Accepted connection from %s", theNode->clientIP);
-
-        if (pthread_create(&(theNode->threadID), NULL, connect_thread, theNode) != 0)
+        if (!theNode)
         {
+            syslog(LOG_ERR, "thread_list_add failed dropping connection");
+            free(args);
             close(client_fd);
-            free(theNode);
             continue;
         }
 
-        pthread_mutex_lock(&file_mutex);
-        SLIST_INSERT_HEAD(&head, theNode, entries);
-        pthread_mutex_unlock(&file_mutex);
+        args->client_fd = client_fd;
+        args->node = theNode;
 
-        threadData_t *tempNode;
-        threadData_t *nextNode;
-        pthread_mutex_lock(&file_mutex);
-        SLIST_FOREACH_SAFE(tempNode, &head, entries, nextNode)
+        pthread_t tID;
+        
+        if (pthread_create(&tID, NULL, connect_thread, args) != 0)
         {
-            if (tempNode->complete)
-            {
-                SLIST_REMOVE(&head, tempNode, threadData, entries);
-                pthread_join(tempNode->threadID, NULL);
-                free(tempNode);
-            }
+            syslog(LOG_ERR, "pthread_create failed %m");
+            thread_list_remove(theNode);
+            free(args);
+            close(client_fd);
+            continue;
         }
-        pthread_mutex_unlock(&file_mutex);
+
+        pthread_mutex_lock(&thread_list_lock);
+        theNode->threadID = tID;
+        pthread_mutex_unlock(&thread_list_lock);
 
     }
 
+
+
+    //     fd_set rfds;
+    //     struct timeval theTime;
+    //     FD_ZERO(&rfds);
+    //     FD_SET(server_socket, &rfds);
+
+    //     theTime.tv_sec = 1;
+    //     theTime.tv_usec = 0;
+
+    //     int result = select(server_socket + 1, &rfds, NULL, NULL, &theTime);
+    //     if (result == -1)
+    //     {
+    //         if (errno = EINTR)
+    //         {
+    //             continue;
+    //         }
+    //         break;
+    //     }
+    //     else if (result == 0)
+    //     {
+    //         continue;
+    //     }
+
+    //     int client_fd = accept(server_socket, (struct sockaddr *)&client_addr, &addr_size);
+
+    //     if (client_fd < 0)
+    //     {
+    //         if (errno == EINTR)
+    //         {
+    //             continue;
+    //         }
+    //         break;
+    //     }
+
+    //     threadData_t *theNode = malloc(sizeof(threadData_t));
+
+    //     if (theNode == NULL)
+    //     {
+    //         close(client_fd);
+    //         continue;
+    //     }
+
+    //     theNode->client_fd = client_fd;
+    //     theNode->complete = 0;
+    //     // Retrieve IP address from client
+
+    //     inet_ntop(AF_INET, &(((struct sockaddr_in *)&client_addr)->sin_addr), theNode->clientIP, 16);
+    //     syslog(LOG_INFO, "Accepted connection from %s", theNode->clientIP);
+
+    //     if (pthread_create(&(theNode->threadID), NULL, connect_thread, theNode) != 0)
+    //     {
+    //         close(client_fd);
+    //         free(theNode);
+    //         continue;
+    //     }
+
+    //     pthread_mutex_lock(&file_mutex);
+    //     SLIST_INSERT_HEAD(&head, theNode, entries);
+    //     pthread_mutex_unlock(&file_mutex);
+
+    //     threadData_t *tempNode;
+    //     threadData_t *nextNode;
+    //     pthread_mutex_lock(&file_mutex);
+    //     SLIST_FOREACH_SAFE(tempNode, &head, entries, nextNode)
+    //     {
+    //         if (tempNode->complete)
+    //         {
+    //             SLIST_REMOVE(&head, tempNode, threadData, entries);
+    //             pthread_join(tempNode->threadID, NULL);
+    //             free(tempNode);
+    //         }
+    //     }
+    //     pthread_mutex_unlock(&file_mutex);
+
+    // }
+
     syslog(LOG_INFO, "Signal received, exiting...");
+    shutdown_all_threads();
 
     #if !USE_AESD_CHAR_DEVICE
     pthread_join(timeID, NULL);
+
+    remove(DATA_FILE);
+
     #endif
 
-    threadData_t *theThread;
+    // threadData_t *theThread;
 
-    while (!SLIST_EMPTY(&head))
-    {
-        theThread = SLIST_FIRST(&head);
-        SLIST_REMOVE_HEAD(&head, entries);
-        pthread_join(theThread->threadID, NULL);
-        free(theThread);
-    }
+    // while (!SLIST_EMPTY(&head))
+    // {
+    //     theThread = SLIST_FIRST(&head);
+    //     SLIST_REMOVE_HEAD(&head, entries);
+    //     pthread_join(theThread->threadID, NULL);
+    //     free(theThread);
+    // }
 
-    #if USE_AESD_CHAR_DEVICE
-    if (access(DATA_FILE, F_OK) == 0)
-    {
-        unlink(DATA_FILE);
-    }
-    #endif
+    // #if !USE_AESD_CHAR_DEVICE
+    // if (access(DATA_FILE, F_OK) == 0)
+    // {
+    //     unlink(DATA_FILE);
+    // }
+    // #endif
 
-    if (server_socket >= 0)
-    {
-        close(server_socket);
-    }
+    // if (server_socket >= 0)
+    // {
+    //     close(server_socket);
+    // }
+
+    pthread_mutex_destroy(&thread_list_lock);
+    pthread_mutex_destroy(&file_mutex);
 
 	closelog();	
 	return 0;
