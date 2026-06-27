@@ -1,22 +1,15 @@
 #!/bin/sh
 
-PIDFILE=/tmp/aesdsocket.pid
-
 case "$1" in
     start)
-        echo "Starting aesdsocket..."
-        start-stop-daemon --start \
-			--name aesdsocket \
-			--pidfile $PIDFILE \
-			--startas /usr/bin/aesdsocket -- -d
+        echo "Starting aesdsocket"
+        start-stop-daemon -S -n aesdsocket -a /usr/bin/aesdsocket -- -d
         ;;
     stop)
-        echo "Stopping aesdsocket..."
-        start-stop-daemon --stop \
-			--name aesdsocket \
-			--pidfile $PIDFILE \
-			--retry 5 \
-			--remove-pidfile
+        echo "Stoppingaesdsocket"
+        while start-stop-daemon -K -t -n aesdsocket > /dev/null 2>&1; do
+            sleep 1
+        done
         ;;
     *)
         echo "Default: $0 {start|stop}"
